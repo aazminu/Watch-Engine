@@ -1,0 +1,75 @@
+.about-page {
+  min-height: 100vh;
+  background: #0a0a0a;
+}
+
+.about-container {
+  font-family: 'Inter', sans-serif;
+  padding: 2rem;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.about-header {
+  text-align: center;
+  margin-bottom: 3rem;
+  margin-top: 2rem;
+}
+
+.about-header h1 {
+  font-family: 'Georgia', serif;
+  font-weight: 400;
+  font-size: 2rem;
+  color: #f5f5f0;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.about-content {
+  color: #888;
+  font-size: 0.9rem;
+  line-height: 1.8;
+}
+
+.about-content h2 {
+  font-family: 'Georgia', serif;
+  font-weight: 400;
+  font-size: 1.2rem;
+  color: #e8e8e3;
+  margin: 2.5rem 0 0.75rem;
+}
+
+.about-content h2:first-child {
+  margin-top: 0;
+}
+
+.about-content p {
+  font-size: 0.9rem;
+  line-height: 1.8;
+  color: #555;
+  margin: 0 0 1rem 0;
+}
+
+.about-content a {
+  color: #888;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.about-content a:hover {
+  color: #e8e8e3;
+}
+
+.about-footer {
+  max-width: 640px;
+  margin: 3rem auto 0;
+  text-align: center;
+  padding: 1.5rem;
+  border-top: 1px solid #141414;
+  color: #333;
+  font-size: 0.75rem;
+}
+
+.about-footer p {
+  margin: 0;
+}
