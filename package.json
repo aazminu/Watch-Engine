@@ -1,5 +1,15 @@
 {
+  "name": "watch-engine",
+  "version": "1.1.0",
+  "description": "Hybrid BM25 and dense vector watch catalog search engine with Reciprocal Rank Fusion (RRF), Chrono24/Jomashop price tracking, and retrieval evaluation",
   "type": "module",
+  "bin": {
+    "watch-engine": "./backend/cli.js"
+  },
+  "scripts": {
+    "test": "node --test tests/hybridSearchEngine.test.js",
+    "cli": "node backend/cli.js"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.4",
     "@types/next": "^8.0.7",

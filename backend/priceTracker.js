@@ -1,38 +1,66 @@
 /**
- * Price Tracker — Scheduled Script
- *
- * Snapshots current prices from the watches table into price_history,
- * then checks active alerts and logs which ones are triggered.
- *
- * Run manually:   node backend/priceTracker.js
- * Run via cron:   every 6 hours
- *
- * Prerequisites:
- *   - .env with Supabase credentials
- *   - price_history and price_alerts tables created
+ * Price Tracker - Scheduled Script & Alert Evaluator
  */
 
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
-
-const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY);
-
 const PAGE_SIZE = 500;
+const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-async function snapshotPrices() {
-  console.log('Snapshotting current prices into price_history...');
+let _supabase = null;
+export async function getSupabaseClient() {
+  if (!_supabase) {
+    try {
+      const dotenv = await import('dotenv');
+      dotenv.default.config({ path: path.resolve(__dirname, '../.env') });
+    } catch {}
+    const { createClient } = await import('@supabase/supabase-js');
+    const url = process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      throw new Error('Missing VITE_SUPABASE_URL or SUPABASE_ANON_KEY environment variables');
+    }
+    _supabase = createClient(url, key);
+  }
+  return _supabase;
+}
+
+/**
+ * Deterministically evaluate whether an alert should fire for a watch snapshot.
+ * Fixes ISO string comparison bug and guards against invalid/non-positive prices.
+ */
+export function shouldTriggerPriceAlert(alert, watch, nowMs = Date.now()) {
+  if (!alert || !watch) return false;
+  if (alert.is_active === false) return false;
+
+  const currentPrice = Number(watch.price_eur ?? watch.price);
+  const targetPrice = Number(alert.target_price);
+
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return false;
+  if (!Number.isFinite(targetPrice) || targetPrice <= 0) return false;
+  if (currentPrice > targetPrice) return false;
+
+  if (alert.last_notified) {
+    const lastMs = Date.parse(alert.last_notified);
+    if (Number.isFinite(lastMs) && nowMs - lastMs < COOLDOWN_MS) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export async function snapshotPrices(supabase = null) {
+  const client = supabase || (await getSupabaseClient());
   let offset = 0;
   let totalRecorded = 0;
 
   while (true) {
-    const { data: watches, error } = await supabase
+    const { data: watches, error } = await client
       .from('watches')
       .select('id, price_eur, source')
       .not('price_eur', 'is', null)
@@ -41,95 +69,68 @@ async function snapshotPrices() {
     if (error) { console.error('Fetch error:', error); break; }
     if (!watches || watches.length === 0) break;
 
-    const rows = watches.map(w => ({
-      watch_id: w.id,
-      price: w.price_eur,
-      source: w.source || 'Unknown',
-    }));
+    const rows = watches
+      .filter(w => Number.isFinite(Number(w.price_eur)) && Number(w.price_eur) > 0)
+      .map(w => ({
+        watch_id: w.id,
+        price: Number(w.price_eur),
+        source: w.source || 'Unknown',
+      }));
 
-    const { error: insertError } = await supabase
-      .from('price_history')
-      .insert(rows);
+    if (rows.length > 0) {
+      const { error: insertError } = await client
+        .from('price_history')
+        .insert(rows);
 
-    if (insertError) {
-      console.error('Insert error:', insertError);
-      break;
+      if (insertError) {
+        console.error('Insert error:', insertError);
+        break;
+      }
+      totalRecorded += rows.length;
     }
-
-    totalRecorded += rows.length;
-    console.log(`  Recorded ${totalRecorded} prices so far...`);
     offset += PAGE_SIZE;
   }
 
-  console.log(`Price snapshot complete: ${totalRecorded} records.`);
   return totalRecorded;
 }
 
-async function checkAlerts() {
-  console.log('\nChecking active price alerts...');
-
-  // Get all active alerts
-  const { data: alerts, error } = await supabase
+export async function checkAlerts(supabase = null, nowMs = Date.now()) {
+  const client = supabase || (await getSupabaseClient());
+  const { data: alerts, error } = await client
     .from('price_alerts')
-    .select('id, user_id, watch_id, target_price, last_notified')
+    .select('id, user_id, watch_id, target_price, last_notified, is_active')
     .eq('is_active', true);
 
-  if (error) { console.error('Alert fetch error:', error); return; }
-  if (!alerts || alerts.length === 0) {
-    console.log('No active alerts.');
-    return;
-  }
+  if (error || !alerts || alerts.length === 0) return 0;
 
-  console.log(`Found ${alerts.length} active alerts.`);
-
-  // Get current prices for all alerted watches
   const watchIds = [...new Set(alerts.map(a => a.watch_id))];
-  const { data: watches } = await supabase
+  const { data: watches } = await client
     .from('watches')
     .select('id, price_eur, model_name')
     .in('id', watchIds);
 
   const watchMap = new Map((watches || []).map(w => [w.id, w]));
-
   let triggered = 0;
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   for (const alert of alerts) {
     const watch = watchMap.get(alert.watch_id);
-    if (!watch || !watch.price_eur) continue;
+    if (!shouldTriggerPriceAlert(alert, watch, nowMs)) continue;
 
-    if (watch.price_eur <= alert.target_price) {
-      // Skip if already notified within 24h
-      if (alert.last_notified && alert.last_notified > oneDayAgo) continue;
-
-      triggered++;
-      console.log(`  TRIGGERED: "${watch.model_name}" is $${watch.price_eur} (target: $${alert.target_price})`);
-
-      // Mark as notified
-      await supabase
-        .from('price_alerts')
-        .update({ last_notified: new Date().toISOString() })
-        .eq('id', alert.id);
-
-      // TODO: Send email notification here
-      // await sendAlertEmail(alert.user_id, watch.model_name, watch.price_eur, alert.target_price);
-    }
+    triggered++;
+    await client
+      .from('price_alerts')
+      .update({ last_notified: new Date(nowMs).toISOString() })
+      .eq('id', alert.id);
   }
 
-  console.log(`${triggered} alerts triggered.`);
+  return triggered;
 }
 
 async function main() {
-  const startTime = Date.now();
-  console.log('='.repeat(50));
-  console.log(`Price Tracker — ${new Date().toISOString()}`);
-  console.log('='.repeat(50));
-
   await snapshotPrices();
   await checkAlerts();
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\nDone in ${elapsed}s`);
 }
 
-main().catch(console.error);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(console.error);
+}
