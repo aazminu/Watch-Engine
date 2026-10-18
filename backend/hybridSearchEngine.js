@@ -467,3 +467,33 @@ export function evaluateSearchRelevance(rankedIds, relevantIds, k = 5) {
     ndcg_at_k: idcg > 0 ? Number((dcg / idcg).toFixed(4)) : 0,
   };
 }
+
+export function computeCatalogCoverageStats(catalog, rankedResults = []) {
+  if (!Array.isArray(catalog)) {
+    throw new TypeError('catalog must be an array');
+  }
+  const brandCounts = new Map();
+  for (const item of catalog) {
+    const brand = String(item?.brand || 'Unknown').trim();
+    brandCounts.set(brand, (brandCounts.get(brand) || 0) + 1);
+  }
+  const total = catalog.length;
+  let entropy = 0;
+  if (total > 0) {
+    for (const count of brandCounts.values()) {
+      const p = count / total;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+  }
+  const resultBrands = new Set(
+    (Array.isArray(rankedResults) ? rankedResults : [])
+      .map((r) => r?.brand)
+      .filter(Boolean)
+  );
+  return {
+    catalogSize: total,
+    uniqueBrands: brandCounts.size,
+    brandEntropyBits: Number(entropy.toFixed(6)),
+    topKBrandCoverage: brandCounts.size > 0 ? Number((resultBrands.size / brandCounts.size).toFixed(4)) : 0,
+  };
+}
