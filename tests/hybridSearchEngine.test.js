@@ -177,3 +177,19 @@ test('evaluateSearchRelevance computes Recall@K, Precision@K, MRR, and nDCG@K', 
   assert.equal(metrics.mrr, 1.0);
   assert.ok(metrics.ndcg_at_k > 0.9 && metrics.ndcg_at_k <= 1.0);
 });
+
+import { computeCatalogCoverageStats } from '../backend/hybridSearchEngine.js';
+
+test('computeCatalogCoverageStats computes brand Shannon entropy and coverage', () => {
+  const catalog = [
+    { id: '1', brand: 'Rolex', price: 10500 },
+    { id: '2', brand: 'Omega', price: 6200 },
+    { id: '3', brand: 'Seiko', price: 850 },
+    { id: '4', brand: 'Tudor', price: 3900 },
+  ];
+  const stats = computeCatalogCoverageStats(catalog, [catalog[0], catalog[1]]);
+  assert.equal(stats.catalogSize, 4);
+  assert.equal(stats.uniqueBrands, 4);
+  assert.equal(stats.brandEntropyBits, 2);
+  assert.equal(stats.topKBrandCoverage, 0.5);
+});
